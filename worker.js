@@ -14,6 +14,7 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
+    // 发送历史消息给新用户
     const messages = (await this.state.storage.get("messages")) || [];
     messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
 
@@ -26,10 +27,14 @@ export class ChatRoom {
           time: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }),
           sender: data.nick
         };
+
+        // 保存最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
         if (all.length > 100) all = all.slice(all.length - 100);
         await this.state.storage.put("messages", all);
+
+        // 广播给在线客户端
         this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
@@ -46,23 +51,26 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // WebSocket 入口
     if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
+    // POST 登录请求处理
     if (request.method === "POST") {
       try {
         const { username, password } = await request.json();
-        const users = JSON.parse((env.CHAT_USERS || "[]").trim());
+        const users = JSON.parse(env.CHAT_USERS || "[]");
         const ok = users.some(u => u.user === username && u.pass === password);
         return new Response(JSON.stringify({ ok }), { headers: { "content-type":"application/json" } });
       } catch {
-        return new Response(JSON.stringify({ ok: false }), { headers: { "content-type":"application/json" } });
+        return new Response(JSON.stringify({ ok:false }), { headers: { "content-type":"application/json" } });
       }
     }
 
+    // 前端 HTML
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -94,7 +102,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
   <div id="loginMsg" style="color:red;margin-top:5px;"></div>
 </div>
 
-<div id="chat-area" style="display:none;height:100%;">
+<div id="chat-area" style="display:none;height:100%;width:100%;">
   <div id="chat"></div>
   <div id="input-area">
     <input id="nick" disabled>
@@ -121,13 +129,13 @@ let ws;
 const login = () => {
   const username = userInput.value.trim();
   const password = passInput.value.trim();
-  if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
+  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
 
   fetch("/", {
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body: JSON.stringify({username, password})
-  }).then(r => r.json()).then(res => {
+  }).then(r=>r.json()).then(res=>{
     if(res.ok){
       loginDiv.style.display="none";
       chatDiv.style.display="flex";
@@ -148,7 +156,7 @@ const login = () => {
   });
 };
 
-// 按回车键登录
+// 按回车登录
 userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 
