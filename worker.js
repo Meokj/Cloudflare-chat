@@ -14,7 +14,6 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
-    // 发送历史消息给新用户
     const messages = (await this.state.storage.get("messages")) || [];
     messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
 
@@ -27,14 +26,10 @@ export class ChatRoom {
           time: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }),
           sender: data.nick
         };
-
-        // 保存最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
         if (all.length > 100) all = all.slice(all.length - 100);
         await this.state.storage.put("messages", all);
-
-        // 广播给在线客户端
         this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
@@ -51,14 +46,12 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // WebSocket 入口
     if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // POST 登录请求处理
     if (request.method === "POST") {
       try {
         const { username, password } = await request.json();
@@ -70,7 +63,6 @@ export default {
       }
     }
 
-    // 登录页面 + 聊天室 HTML
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -90,7 +82,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #nick,#msg,#user,#pass {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
 #user,#pass{margin:5px;}
 #msg{flex:1;margin-right:8px;}
-#send,#loginBtn{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
+#send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
@@ -99,7 +91,6 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 <div id="login">
   <input id="user" placeholder="用户名">
   <input id="pass" type="password" placeholder="密码">
-  <button id="loginBtn">登录</button>
   <div id="loginMsg" style="color:red;margin-top:5px;"></div>
 </div>
 
@@ -115,7 +106,6 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 <script>
 const loginDiv = document.getElementById("login");
 const chatDiv = document.getElementById("chat-area");
-const loginBtn = document.getElementById("loginBtn");
 const userInput = document.getElementById("user");
 const passInput = document.getElementById("pass");
 const loginMsg = document.getElementById("loginMsg");
@@ -127,7 +117,8 @@ const sendBtn = document.getElementById("send");
 
 let ws;
 
-loginBtn.onclick = () => {
+// 登录函数
+const login = () => {
   const username = userInput.value.trim();
   const password = passInput.value.trim();
   if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
@@ -157,6 +148,11 @@ loginBtn.onclick = () => {
   });
 };
 
+// 按回车键登录
+userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
+passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
+
+// 发送消息
 const sendMsg = () => {
   if(!msgInput.value.trim()) return;
   ws.send(JSON.stringify({nick:nickInput.value, text:msgInput.value.trim()}));
