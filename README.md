@@ -1,6 +1,6 @@
 # chat
 * `CHAT_USERS`
 ```[
-  {"user":"just2so","pass":"123123"},
+  {"user":"tom","pass":"123"},
   {"user":"bob","pass":"456"}
-]```
+]
