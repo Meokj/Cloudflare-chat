@@ -3,6 +3,7 @@ export class ChatRoom {
     this.state = state;
     this.env = env;
     this.clients = [];
+    this.onlineUsers = new Set();
   }
 
   async fetch(request) {
@@ -14,11 +15,17 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
+    // 从请求 header 获取用户名
+    const url = new URL(request.url);
+    const username = url.searchParams.get("user") || "unknown";
+
+    // 加入在线用户
+    this.onlineUsers.add(username);
+    this.broadcastOnlineUsers();
+
     // 发送历史消息
     const messages = (await this.state.storage.get("messages")) || [];
-    messages.forEach(m => {
-      try { server.send(JSON.stringify(m)); } catch(e) {}
-    });
+    messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
 
     server.addEventListener("message", async (e) => {
       try {
@@ -30,20 +37,30 @@ export class ChatRoom {
           sender: data.nick
         };
 
+        // 保存最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
         if (all.length > 100) all = all.slice(-100);
         await this.state.storage.put("messages", all);
 
-        this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e) {} });
+        // 广播消息
+        this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
 
     server.addEventListener("close", () => {
       this.clients = this.clients.filter(c => c !== server);
+      this.onlineUsers.delete(username);
+      this.broadcastOnlineUsers();
     });
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  broadcastOnlineUsers() {
+    const list = Array.from(this.onlineUsers);
+    const payload = JSON.stringify({ type: 'online', users: list });
+    this.clients.forEach(c => { try { c.send(payload); } catch(e){} });
   }
 }
 
@@ -51,27 +68,29 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // WebSocket
+    // WebSocket 入口
     if (url.pathname === "/ws") {
+      const username = url.searchParams.get("user");
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // POST 登录
+    // POST 登录请求
     if (request.method === "POST") {
       try {
         const { username, password } = await request.json();
         const users = JSON.parse(env.CHAT_USERS || "[]");
         const ok = users.some(u => u.user === username && u.pass === password);
-        return new Response(JSON.stringify({ ok }), { headers: { "content-type":"application/json" } });
+        return new Response(JSON.stringify({ ok }), { headers: { "content-type": "application/json" } });
       } catch {
-        return new Response(JSON.stringify({ ok:false }), { headers: { "content-type":"application/json" } });
+        return new Response(JSON.stringify({ ok:false }), { headers: { "content-type": "application/json" } });
       }
     }
 
-    // HTML
-    const html = `<!DOCTYPE html>
+    // HTML 页面
+    const html = `
+<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
@@ -91,7 +110,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #msg{flex:1;margin-right:8px;}
 #send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
 #logout {position:absolute;top:10px;right:10px;color:#fff;cursor:pointer;font-size:18px;}
-#online-users {position:absolute;top:10px;left:50%;transform:translateX(-50%);color:#fff;font-size:16px;}
+#onlineUsers {position:absolute;top:10px;width:100%;text-align:center;color:#fff;font-size:16px;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
@@ -104,8 +123,8 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 </div>
 
 <div id="chat-area" style="display:none;height:100%;width:100%;position:relative;">
+  <div id="onlineUsers"></div>
   <div id="logout">退出</div>
-  <div id="online-users"></div>
   <div id="chat"></div>
   <div id="input-area">
     <input id="nick" disabled>
@@ -121,7 +140,7 @@ const userInput = document.getElementById("user");
 const passInput = document.getElementById("pass");
 const loginMsg = document.getElementById("loginMsg");
 const logoutBtn = document.getElementById("logout");
-const onlineUsersDiv = document.getElementById("online-users");
+const onlineUsersDiv = document.getElementById("onlineUsers");
 
 const chat = document.getElementById("chat");
 const nickInput = document.getElementById("nick");
@@ -130,9 +149,8 @@ const sendBtn = document.getElementById("send");
 
 let ws;
 let currentUser = null;
-let onlineUsers = new Set();
 
-// 登录状态保持
+// 刷新保持登录
 if(localStorage.getItem("chatUser")){
   currentUser = localStorage.getItem("chatUser");
   loginDiv.style.display="none";
@@ -143,58 +161,27 @@ if(localStorage.getItem("chatUser")){
 
 // 初始化 WebSocket
 function initWebSocket(){
-  ws = new WebSocket("wss://"+location.host+"/ws");
-
-  ws.onopen = () => {
-    // 更新在线用户
-    if(currentUser) {
-      onlineUsers.add(currentUser);
-      renderOnlineUsers();
-    }
-  };
-
+  ws = new WebSocket("wss://"+location.host+"/ws?user="+encodeURIComponent(currentUser));
   ws.onmessage = (e)=>{
     const d = JSON.parse(e.data);
-    // 显示消息
-    const el = document.createElement("div");
-    el.className = "msg "+(d.sender===currentUser?"right":"left");
-
-    const meta = document.createElement("div");
-    meta.setAttribute("class","meta");
-    meta.textContent = d.nick + " · " + d.time;
-
-    const textDiv = document.createElement("div");
-    textDiv.textContent = d.text;
-
-    el.appendChild(meta);
-    el.appendChild(textDiv);
-    const isAtBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 5;
-    chat.appendChild(el);
-    if(isAtBottom) chat.scrollTop = chat.scrollHeight;
-
-    // 更新在线用户列表
-    if(d.sender) {
-      onlineUsers.add(d.sender);
-      renderOnlineUsers();
+    if(d.type==='online'){
+      onlineUsersDiv.textContent = d.users.join(' , ');
+    } else {
+      const el = document.createElement("div");
+      el.className = "msg "+(d.sender===currentUser?"right":"left");
+      el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
+      const isAtBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 5;
+      chat.appendChild(el);
+      if(isAtBottom) chat.scrollTop = chat.scrollHeight;
     }
   };
-
-  ws.onclose = () => {
-    onlineUsers.clear();
-    renderOnlineUsers();
-  };
 }
 
-// 渲染在线用户
-function renderOnlineUsers(){
-  onlineUsersDiv.textContent = Array.from(onlineUsers).join(", ");
-}
-
-// 登录函数
+// 登录
 function login(){
   const username = userInput.value.trim();
   const password = passInput.value.trim();
-  if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
+  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
 
   fetch("/",{
     method:"POST",
@@ -202,11 +189,11 @@ function login(){
     body: JSON.stringify({username,password})
   }).then(r=>r.json()).then(res=>{
     if(res.ok){
-      currentUser = username;
+      currentUser=username;
       localStorage.setItem("chatUser",username);
       loginDiv.style.display="none";
       chatDiv.style.display="flex";
-      nickInput.value = username;
+      nickInput.value=username;
       initWebSocket();
     } else {
       loginMsg.textContent="用户名或密码错误";
@@ -214,34 +201,33 @@ function login(){
   });
 }
 
-// 退出
-logoutBtn.onclick = () => {
-  localStorage.removeItem("chatUser");
-  currentUser = null;
-  ws && ws.close();
-  chat.innerHTML="";
-  onlineUsers.clear();
-  renderOnlineUsers();
-  loginDiv.style.display="flex";
-  chatDiv.style.display="none";
-};
-
 // 回车登录
-userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
-passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
+userInput.addEventListener("keydown", e=>{if(e.key==="Enter") login();});
+passInput.addEventListener("keydown", e=>{if(e.key==="Enter") login();});
 
 // 发送消息
-const sendMsg = () => {
+function sendMsg(){
   if(!msgInput.value.trim() || !currentUser) return;
   ws.send(JSON.stringify({nick:currentUser, text:msgInput.value.trim()}));
   msgInput.value="";
-};
-
+}
 sendBtn.onclick = sendMsg;
-msgInput.addEventListener("keydown", e => { if(e.key==="Enter") sendMsg(); });
+msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
+
+// 退出
+logoutBtn.onclick = ()=>{
+  localStorage.removeItem("chatUser");
+  currentUser=null;
+  ws && ws.close();
+  chat.innerHTML="";
+  loginDiv.style.display="flex";
+  chatDiv.style.display="none";
+  onlineUsersDiv.textContent="";
+};
 </script>
 </body>
-</html>`;
+</html>
+`;
 
     return new Response(html, { headers: { "content-type":"text/html; charset=utf-8" } });
   }
