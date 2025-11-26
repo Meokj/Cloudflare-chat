@@ -1,10 +1,9 @@
 name: Deploy Cloudflare Worker
 
+# 手动触发
 on:
-  push:
-    branches:
-      - main  # 推送到 main 分支就会自动部署
-
+  workflow_dispatch:
+  
 jobs:
   deploy:
     runs-on: ubuntu-latest
