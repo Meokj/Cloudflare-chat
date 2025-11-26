@@ -31,7 +31,7 @@ export class ChatRoom {
         // 保存最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
-        if (all.length > 100) all = all.slice(all.length - 100);
+        if (all.length > 100) all = all.slice(-100);
         await this.state.storage.put("messages", all);
 
         // 广播给在线客户端
@@ -51,26 +51,26 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // WebSocket 入口
+    // WebSocket
     if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // POST 登录请求处理
+    // POST 登录请求
     if (request.method === "POST") {
       try {
         const { username, password } = await request.json();
         const users = JSON.parse(env.CHAT_USERS || "[]");
         const ok = users.some(u => u.user === username && u.pass === password);
-        return new Response(JSON.stringify({ ok }), { headers: { "content-type":"application/json" } });
+        return new Response(JSON.stringify({ ok }), { headers: { "content-type": "application/json" } });
       } catch {
-        return new Response(JSON.stringify({ ok:false }), { headers: { "content-type":"application/json" } });
+        return new Response(JSON.stringify({ ok: false }), { headers: { "content-type": "application/json" } });
       }
     }
 
-    // 前端 HTML
+    // HTML
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -90,8 +90,8 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #nick,#msg,#user,#pass {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
 #user,#pass{margin:5px;}
 #msg{flex:1;margin-right:8px;}
-#send,#logoutBtn{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
-#top-bar{width:100%;display:flex;justify-content:flex-end;padding:5px;}
+#send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
+#logout {position:absolute;top:10px;right:10px;color:#fff;cursor:pointer;font-size:18px;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
@@ -103,10 +103,8 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
   <div id="loginMsg" style="color:red;margin-top:5px;"></div>
 </div>
 
-<div id="chat-area" style="display:none;height:100%;width:100%;flex-direction:column;">
-  <div id="top-bar">
-    <button id="logoutBtn">退出</button>
-  </div>
+<div id="chat-area" style="display:none;height:100%;width:100%;position:relative;">
+  <div id="logout">⎋</div>
   <div id="chat"></div>
   <div id="input-area">
     <input id="nick" disabled>
@@ -121,82 +119,86 @@ const chatDiv = document.getElementById("chat-area");
 const userInput = document.getElementById("user");
 const passInput = document.getElementById("pass");
 const loginMsg = document.getElementById("loginMsg");
+const logoutBtn = document.getElementById("logout");
 
 const chat = document.getElementById("chat");
 const nickInput = document.getElementById("nick");
 const msgInput = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
-const logoutBtn = document.getElementById("logoutBtn");
 
 let ws;
+let currentUser = null;
 
-// 检查是否已登录
-const savedUser = localStorage.getItem("chatUser");
-if(savedUser){
+// 检查本地登录
+if(localStorage.getItem("chatUser")){
+  currentUser = localStorage.getItem("chatUser");
   loginDiv.style.display="none";
   chatDiv.style.display="flex";
-  nickInput.value = savedUser;
-  initWS(savedUser);
+  nickInput.value = currentUser;
+  initWebSocket();
+}
+
+// 初始化 WebSocket
+function initWebSocket(){
+  ws = new WebSocket("wss://"+location.host+"/ws");
+  ws.onmessage = (e)=>{
+    const d = JSON.parse(e.data);
+    const el = document.createElement("div");
+    el.className = "msg "+(d.sender===currentUser?"right":"left");
+    el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
+    const isAtBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 5;
+    chat.appendChild(el);
+    if(isAtBottom) chat.scrollTop = chat.scrollHeight;
+  };
 }
 
 // 登录函数
-function login() {
+function login(){
   const username = userInput.value.trim();
   const password = passInput.value.trim();
-  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
+  if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
 
-  fetch("/", {
+  fetch("/",{
     method:"POST",
     headers:{"Content-Type":"application/json"},
     body: JSON.stringify({username,password})
   }).then(r=>r.json()).then(res=>{
     if(res.ok){
+      currentUser = username;
+      localStorage.setItem("chatUser",username);
       loginDiv.style.display="none";
       chatDiv.style.display="flex";
       nickInput.value = username;
-      localStorage.setItem("chatUser", username);
-      initWS(username);
+      initWebSocket();
     } else {
-      loginMsg.textContent = "用户名或密码错误";
+      loginMsg.textContent="用户名或密码错误";
     }
   });
 }
 
-// 初始化 WebSocket
-function initWS(username){
-  ws = new WebSocket("wss://"+location.host+"/ws");
-  ws.onmessage = (e)=>{
-    const d = JSON.parse(e.data);
-    const el = document.createElement("div");
-    el.className = "msg "+(d.sender===username?"right":"left");
-    el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
-    chat.appendChild(el);
-    chat.scrollTop = chat.scrollHeight;
-  };
-}
+// 退出函数
+logoutBtn.onclick = () => {
+  localStorage.removeItem("chatUser");
+  currentUser = null;
+  ws && ws.close();
+  chat.innerHTML="";
+  loginDiv.style.display="flex";
+  chatDiv.style.display="none";
+};
 
-// 按回车登录
+// 回车登录
 userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 
 // 发送消息
-function sendMsg() {
-  if(!msgInput.value.trim()) return;
-  ws.send(JSON.stringify({nick:nickInput.value, text:msgInput.value.trim()}));
+const sendMsg = () => {
+  if(!msgInput.value.trim() || !currentUser) return;
+  ws.send(JSON.stringify({nick:currentUser, text:msgInput.value.trim()}));
   msgInput.value="";
-}
+};
 
 sendBtn.onclick = sendMsg;
-msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
-
-// 退出登录
-logoutBtn.onclick = ()=>{
-  localStorage.removeItem("chatUser");
-  chatDiv.style.display="none";
-  loginDiv.style.display="flex";
-  if(ws) ws.close();
-  ws=null;
-};
+msgInput.addEventListener("keydown", e => { if(e.key==="Enter") sendMsg(); });
 </script>
 </body>
 </html>
