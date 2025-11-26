@@ -214,7 +214,7 @@ function sendMsg(){
 sendBtn.onclick = sendMsg;
 msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
 
-// 退出
+// 退出并清空登录框输入
 logoutBtn.onclick = ()=>{
   localStorage.removeItem("chatUser");
   currentUser=null;
@@ -223,6 +223,8 @@ logoutBtn.onclick = ()=>{
   loginDiv.style.display="flex";
   chatDiv.style.display="none";
   onlineUsersDiv.textContent="";
+  userInput.value = "";
+  passInput.value = "";
 };
 </script>
 </body>
