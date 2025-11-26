@@ -94,7 +94,7 @@ export default {
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>多人聊天室</title>
+<title>聊天室</title>
 <style>
 :root {--bg:#121212; --bubble-left:#1f1f1f; --bubble-right:#4caf50; --text:#eee;}
 body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:column;height:100vh;background:var(--bg);}
