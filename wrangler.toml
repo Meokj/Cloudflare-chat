@@ -1,0 +1,11 @@
+name = "chat"
+main = "worker.js"
+compatibility_date = "2025-11-26"
+
+[[durable_objects]]
+binding = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ChatRoom"]
