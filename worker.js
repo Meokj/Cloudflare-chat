@@ -14,7 +14,7 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
-    // 发送历史消息给新用户
+    // 新用户接入，发送历史消息
     const messages = (await this.state.storage.get("messages")) || [];
     messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
 
@@ -28,13 +28,13 @@ export class ChatRoom {
           sender: data.nick
         };
 
-        // 持久化最新100条
+        // 保存最新 100 条消息
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
         if (all.length > 100) all = all.slice(all.length - 100);
         await this.state.storage.put("messages", all);
 
-        // 广播给在线用户
+        // 广播消息
         this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
@@ -51,17 +51,24 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // WebSocket 入口
     if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // 读取用户名和密码环境变量
-    const users = JSON.parse(env.CHAT_USERS || "[]");
+    if (request.method === "POST") {
+      try {
+        const { username, password } = await request.json();
+        const users = JSON.parse(env.CHAT_USERS || "[]");
+        const ok = users.some(u => u.user === username && u.pass === password);
+        return new Response(JSON.stringify({ ok }), { headers: { "content-type": "application/json" } });
+      } catch {
+        return new Response(JSON.stringify({ ok: false }), { headers: { "content-type": "application/json" } });
+      }
+    }
 
-    // 登录页面 HTML + 聊天室
+    // HTML 页面
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -81,8 +88,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #nick,#msg,#user,#pass {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
 #user,#pass{margin:5px;}
 #msg{flex:1;margin-right:8px;}
-#send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
-@media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
+#send,#loginBtn{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
 </style>
 </head>
 <body>
@@ -117,28 +123,31 @@ const msgInput = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 
 let ws;
+let currentUser;
 
-loginBtn.onclick = () => {
+loginBtn.onclick = async () => {
   const username = userInput.value.trim();
   const password = passInput.value.trim();
-  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
+  if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
 
-  // 验证用户名密码，前端只做示意，实际安全依赖 Worker
-  fetch("/", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({username,password})
-  }).then(r=>r.json()).then(res=>{
-    if(res.ok){
+  try {
+    const res = await fetch("/", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({username,password})
+    });
+    const data = await res.json();
+    if(data.ok){
       loginDiv.style.display="none";
       chatDiv.style.display="flex";
       nickInput.value = username;
+      currentUser = username;
 
       ws = new WebSocket("wss://"+location.host+"/ws");
-      ws.onmessage = (e)=>{
+      ws.onmessage = (e) => {
         const d = JSON.parse(e.data);
         const el = document.createElement("div");
-        el.className = "msg "+(d.sender===username?"right":"left");
+        el.className = "msg "+(d.sender===currentUser?"right":"left");
         el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
         chat.appendChild(el);
         chat.scrollTop = chat.scrollHeight;
@@ -146,33 +155,24 @@ loginBtn.onclick = () => {
     } else {
       loginMsg.textContent = "用户名或密码错误";
     }
-  });
+  } catch(err) {
+    loginMsg.textContent = "登录失败";
+  }
 };
 
 const sendMsg = () => {
-  if(!msgInput.value.trim()) return;
+  if(!msgInput.value.trim() || !ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({nick:nickInput.value, text:msgInput.value.trim()}));
   msgInput.value="";
 };
 
 sendBtn.onclick = sendMsg;
-msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMsg();});
+msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
 </script>
 </body>
 </html>
 `;
 
-    if(request.method==="POST"){
-      try{
-        const {username,password} = await request.json();
-        const users = JSON.parse(env.CHAT_USERS||"[]");
-        const ok = users.some(u=>u.user===username && u.pass===password);
-        return new Response(JSON.stringify({ok}), {headers:{"content-type":"application/json"}});
-      }catch{
-        return new Response(JSON.stringify({ok:false}), {headers:{"content-type":"application/json"}});
-      }
-    }
-
-    return new Response(html, {headers:{"content-type":"text/html; charset=utf-8"}});
+    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 };
