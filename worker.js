@@ -14,9 +14,11 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
-    // 发送历史消息给新用户
+    // 发送历史消息
     const messages = (await this.state.storage.get("messages")) || [];
-    messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
+    messages.forEach(m => {
+      try { server.send(JSON.stringify(m)); } catch(e) {}
+    });
 
     server.addEventListener("message", async (e) => {
       try {
@@ -28,14 +30,12 @@ export class ChatRoom {
           sender: data.nick
         };
 
-        // 保存最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
         if (all.length > 100) all = all.slice(-100);
         await this.state.storage.put("messages", all);
 
-        // 广播给在线客户端
-        this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
+        this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e) {} });
       } catch {}
     });
 
@@ -58,21 +58,20 @@ export default {
       return obj.fetch(request);
     }
 
-    // POST 登录请求
+    // POST 登录
     if (request.method === "POST") {
       try {
         const { username, password } = await request.json();
         const users = JSON.parse(env.CHAT_USERS || "[]");
         const ok = users.some(u => u.user === username && u.pass === password);
-        return new Response(JSON.stringify({ ok }), { headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ ok }), { headers: { "content-type":"application/json" } });
       } catch {
-        return new Response(JSON.stringify({ ok: false }), { headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ ok:false }), { headers: { "content-type":"application/json" } });
       }
     }
 
     // HTML
-    const html = `
-<!DOCTYPE html>
+    const html = `<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
@@ -81,7 +80,7 @@ export default {
 :root {--bg:#121212; --bubble-left:#1f1f1f; --bubble-right:#4caf50; --text:#eee;}
 body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:column;height:100vh;background:var(--bg);}
 #login, #chat-area {flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;}
-#chat {flex:1;overflow-y:auto;padding:50px 15px 15px 15px;width:100%;} /* 上方留出在线用户空间 */
+#chat {flex:1;overflow-y:auto;padding:15px;width:100%;}
 .msg {margin-bottom:10px;padding:10px 14px;border-radius:15px;max-width:70%;word-wrap:break-word;}
 .msg .meta {font-size:12px;opacity:0.7;margin-bottom:4px;}
 .msg.left {background:var(--bubble-left);color:var(--text);align-self:flex-start;}
@@ -92,7 +91,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #msg{flex:1;margin-right:8px;}
 #send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
 #logout {position:absolute;top:10px;right:10px;color:#fff;cursor:pointer;font-size:18px;}
-#online-users {position:absolute;top:10px;left:50%;transform:translateX(-50%);color:#fff;font-size:16px;text-align:center;z-index:10;}
+#online-users {position:absolute;top:10px;left:50%;transform:translateX(-50%);color:#fff;font-size:16px;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
@@ -122,7 +121,7 @@ const userInput = document.getElementById("user");
 const passInput = document.getElementById("pass");
 const loginMsg = document.getElementById("loginMsg");
 const logoutBtn = document.getElementById("logout");
-const onlineDiv = document.getElementById("online-users");
+const onlineUsersDiv = document.getElementById("online-users");
 
 const chat = document.getElementById("chat");
 const nickInput = document.getElementById("nick");
@@ -133,34 +132,62 @@ let ws;
 let currentUser = null;
 let onlineUsers = new Set();
 
-// 更新在线用户显示
-function updateOnline(){
-  onlineDiv.textContent = "在线: " + [...onlineUsers].join(", ");
+// 登录状态保持
+if(localStorage.getItem("chatUser")){
+  currentUser = localStorage.getItem("chatUser");
+  loginDiv.style.display="none";
+  chatDiv.style.display="flex";
+  nickInput.value = currentUser;
+  initWebSocket();
 }
 
 // 初始化 WebSocket
 function initWebSocket(){
   ws = new WebSocket("wss://"+location.host+"/ws");
-  
+
   ws.onopen = () => {
-    onlineUsers.add(currentUser);
-    updateOnline();
+    // 更新在线用户
+    if(currentUser) {
+      onlineUsers.add(currentUser);
+      renderOnlineUsers();
+    }
   };
 
   ws.onmessage = (e)=>{
     const d = JSON.parse(e.data);
+    // 显示消息
     const el = document.createElement("div");
     el.className = "msg "+(d.sender===currentUser?"right":"left");
-    el.innerHTML = `<div class="meta">${d.nick} · ${d.time}</div><div>${d.text}</div>`;
+
+    const meta = document.createElement("div");
+    meta.setAttribute("class","meta");
+    meta.textContent = d.nick + " · " + d.time;
+
+    const textDiv = document.createElement("div");
+    textDiv.textContent = d.text;
+
+    el.appendChild(meta);
+    el.appendChild(textDiv);
     const isAtBottom = chat.scrollHeight - chat.scrollTop <= chat.clientHeight + 5;
     chat.appendChild(el);
     if(isAtBottom) chat.scrollTop = chat.scrollHeight;
+
+    // 更新在线用户列表
+    if(d.sender) {
+      onlineUsers.add(d.sender);
+      renderOnlineUsers();
+    }
   };
 
   ws.onclose = () => {
-    onlineUsers.delete(currentUser);
-    updateOnline();
+    onlineUsers.clear();
+    renderOnlineUsers();
   };
+}
+
+// 渲染在线用户
+function renderOnlineUsers(){
+  onlineUsersDiv.textContent = Array.from(onlineUsers).join(", ");
 }
 
 // 登录函数
@@ -187,30 +214,21 @@ function login(){
   });
 }
 
-// 回车登录
-userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
-passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
-
-// 退出函数
+// 退出
 logoutBtn.onclick = () => {
   localStorage.removeItem("chatUser");
   currentUser = null;
   ws && ws.close();
   chat.innerHTML="";
+  onlineUsers.clear();
+  renderOnlineUsers();
   loginDiv.style.display="flex";
   chatDiv.style.display="none";
 };
 
-// 刷新保持登录
-if(localStorage.getItem("chatUser")){
-  currentUser = localStorage.getItem("chatUser");
-  loginDiv.style.display="none";
-  chatDiv.style.display="flex";
-  nickInput.value = currentUser;
-  initWebSocket();
-  onlineUsers.add(currentUser);
-  updateOnline();
-}
+// 回车登录
+userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
+passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 
 // 发送消息
 const sendMsg = () => {
@@ -223,8 +241,7 @@ sendBtn.onclick = sendMsg;
 msgInput.addEventListener("keydown", e => { if(e.key==="Enter") sendMsg(); });
 </script>
 </body>
-</html>
-`;
+</html>`;
 
     return new Response(html, { headers: { "content-type":"text/html; charset=utf-8" } });
   }
