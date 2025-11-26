@@ -14,11 +14,9 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
-    // 先把历史消息发给新加入的客户端
+    // 发送历史消息给新用户
     const messages = (await this.state.storage.get("messages")) || [];
-    messages.forEach(m => {
-      try { server.send(JSON.stringify(m)); } catch(e) {}
-    });
+    messages.forEach(m => { try { server.send(JSON.stringify(m)); } catch(e){} });
 
     server.addEventListener("message", async (e) => {
       try {
@@ -30,13 +28,13 @@ export class ChatRoom {
           sender: data.nick
         };
 
-        // 保存到 Durable Object Storage
+        // 持久化最新100条
         let all = (await this.state.storage.get("messages")) || [];
         all.push(msg);
-        if (all.length > 100) all = all.slice(all.length - 100); // 保留最新100条
+        if (all.length > 100) all = all.slice(all.length - 100);
         await this.state.storage.put("messages", all);
 
-        // 广播给在线客户端
+        // 广播给在线用户
         this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
@@ -53,13 +51,17 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // WebSocket 入口
     if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // 前端 HTML
+    // 读取用户名和密码环境变量
+    const users = JSON.parse(env.CHAT_USERS || "[]");
+
+    // 登录页面 HTML + 聊天室
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -69,57 +71,108 @@ export default {
 <style>
 :root {--bg:#121212; --bubble-left:#1f1f1f; --bubble-right:#4caf50; --text:#eee;}
 body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:column;height:100vh;background:var(--bg);}
-#chat {flex:1;overflow-y:auto;padding:15px;}
+#login, #chat-area {flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;}
+#chat {flex:1;overflow-y:auto;padding:15px;width:100%;}
 .msg {margin-bottom:10px;padding:10px 14px;border-radius:15px;max-width:70%;word-wrap:break-word;}
 .msg .meta {font-size:12px;opacity:0.7;margin-bottom:4px;}
 .msg.left {background:var(--bubble-left);color:var(--text);align-self:flex-start;}
 .msg.right {background:var(--bubble-right);color:#fff;align-self:flex-end;}
-#input-area {display:flex;padding:10px;background:#1a1a1a;border-top:1px solid #333;}
-#nick,#msg {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
-#nick{width:100px;margin-right:8px;}
+#input-area {display:flex;padding:10px;background:#1a1a1a;border-top:1px solid #333;width:100%;}
+#nick,#msg,#user,#pass {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
+#user,#pass{margin:5px;}
 #msg{flex:1;margin-right:8px;}
 #send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
 <body>
-<div id="chat"></div>
-<div id="input-area">
-<input id="nick" placeholder="昵称">
-<input id="msg" placeholder="输入消息...">
-<button id="send">发送</button>
+
+<div id="login">
+  <input id="user" placeholder="用户名">
+  <input id="pass" type="password" placeholder="密码">
+  <button id="loginBtn">登录</button>
+  <div id="loginMsg" style="color:red;margin-top:5px;"></div>
 </div>
+
+<div id="chat-area" style="display:none;width:100%;height:100%;">
+  <div id="chat"></div>
+  <div id="input-area">
+    <input id="nick" disabled>
+    <input id="msg" placeholder="输入消息...">
+    <button id="send">发送</button>
+  </div>
+</div>
+
 <script>
-const chat=document.getElementById("chat");
-const nick=document.getElementById("nick");
-const msg=document.getElementById("msg");
-const send=document.getElementById("send");
-const ws=new WebSocket("wss://"+location.host+"/ws");
+const loginDiv = document.getElementById("login");
+const chatDiv = document.getElementById("chat-area");
+const loginBtn = document.getElementById("loginBtn");
+const userInput = document.getElementById("user");
+const passInput = document.getElementById("pass");
+const loginMsg = document.getElementById("loginMsg");
 
-// 消息到达时显示
-ws.onmessage=(e)=>{
-  const d=JSON.parse(e.data);
-  const el=document.createElement("div");
-  el.className="msg "+(d.sender===nick.value?"right":"left");
-  el.innerHTML=\`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
-  chat.appendChild(el);
-  chat.scrollTop=chat.scrollHeight;
+const chat = document.getElementById("chat");
+const nickInput = document.getElementById("nick");
+const msgInput = document.getElementById("msg");
+const sendBtn = document.getElementById("send");
+
+let ws;
+
+loginBtn.onclick = () => {
+  const username = userInput.value.trim();
+  const password = passInput.value.trim();
+  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
+
+  // 验证用户名密码，前端只做示意，实际安全依赖 Worker
+  fetch("/", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({username,password})
+  }).then(r=>r.json()).then(res=>{
+    if(res.ok){
+      loginDiv.style.display="none";
+      chatDiv.style.display="flex";
+      nickInput.value = username;
+
+      ws = new WebSocket("wss://"+location.host+"/ws");
+      ws.onmessage = (e)=>{
+        const d = JSON.parse(e.data);
+        const el = document.createElement("div");
+        el.className = "msg "+(d.sender===username?"right":"left");
+        el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
+        chat.appendChild(el);
+        chat.scrollTop = chat.scrollHeight;
+      };
+    } else {
+      loginMsg.textContent = "用户名或密码错误";
+    }
+  });
 };
 
-// 发送消息
-const sendMsg=()=>{
-  if(!nick.value.trim()||!msg.value.trim()) return;
-  ws.send(JSON.stringify({nick:nick.value.trim(),text:msg.value.trim()}));
-  msg.value="";
+const sendMsg = () => {
+  if(!msgInput.value.trim()) return;
+  ws.send(JSON.stringify({nick:nickInput.value, text:msgInput.value.trim()}));
+  msgInput.value="";
 };
 
-send.onclick=sendMsg;
-msg.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
+sendBtn.onclick = sendMsg;
+msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMsg();});
 </script>
 </body>
 </html>
 `;
 
-    return new Response(html, { headers: { "content-type":"text/html; charset=utf-8" } });
+    if(request.method==="POST"){
+      try{
+        const {username,password} = await request.json();
+        const users = JSON.parse(env.CHAT_USERS||"[]");
+        const ok = users.some(u=>u.user===username && u.pass===password);
+        return new Response(JSON.stringify({ok}), {headers:{"content-type":"application/json"}});
+      }catch{
+        return new Response(JSON.stringify({ok:false}), {headers:{"content-type":"application/json"}});
+      }
+    }
+
+    return new Response(html, {headers:{"content-type":"text/html; charset=utf-8"}});
   }
 };
