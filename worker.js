@@ -196,7 +196,10 @@ function login(){
       nickInput.value=username;
       initWebSocket();
     } else {
-      loginMsg.textContent="用户名或密码错误";
+      alert("用户名或密码错误");  // 弹窗提示
+      userInput.value = "";         
+      passInput.value = "";         
+      userInput.focus();            
     }
   });
 }
