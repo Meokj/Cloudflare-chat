@@ -24,8 +24,8 @@ export class ChatRoom {
     server.addEventListener("message", async (e) => {
       try {
         const data = JSON.parse(e.data);
+        if (!data.nick || !data.text) return;
 
-        // 格式化消息
         const payload = {
           nick: data.nick,
           sender: data.nick,
@@ -39,11 +39,11 @@ export class ChatRoom {
           }).format(new Date())
         };
 
-        // 保存到 Durable Object 存储
+        // 持久化消息
         const id = crypto.randomUUID();
         await this.state.storage.put("msg:" + id, payload, { metadata: { time: Date.now() } });
 
-        // 保留最新 100 条
+        // 保留最新100条
         const allMessages = await this.state.storage.list({ prefix: "msg:" });
         if (allMessages.length > 100) {
           const sorted = allMessages.sort((a, b) => a.metadata.time - b.metadata.time);
@@ -57,9 +57,7 @@ export class ChatRoom {
         const str = JSON.stringify(payload);
         this.clients.forEach(c => { try { c.send(str); } catch {} });
 
-      } catch (err) {
-        console.error(err);
-      }
+      } catch {}
     });
 
     server.addEventListener("close", () => {
@@ -99,7 +97,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #nick{width:100px;margin-right:8px;}
 #msg{flex:1;margin-right:8px;}
 #send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
-@media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;} }
+@media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
 <body>
@@ -125,13 +123,14 @@ ws.onmessage=(e)=>{
   chat.scrollTop=chat.scrollHeight;
 };
 
-send.onclick=()=>{
-  if(!nick.value.trim()||!msg.value.trim())return;
+const sendMsg=()=>{
+  if(!nick.value.trim()||!msg.value.trim()) return;
   ws.send(JSON.stringify({nick:nick.value.trim(),text:msg.value.trim()}));
   msg.value="";
 };
 
-msg.addEventListener("keydown",e=>{if(e.key==="Enter")send.onclick();});
+send.onclick=sendMsg;
+msg.addEventListener("keydown",e=>{if(e.key==="Enter")sendMsg();});
 </script>
 </body>
 </html>
