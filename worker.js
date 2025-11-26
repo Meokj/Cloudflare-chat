@@ -104,7 +104,7 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 </div>
 
 <div id="chat-area" style="display:none;height:100%;width:100%;position:relative;">
-  <div id="logout">⎋</div>
+  <div id="logout">logout</div>
   <div id="chat"></div>
   <div id="input-area">
     <input id="nick" disabled>
