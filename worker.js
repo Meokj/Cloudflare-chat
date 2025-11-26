@@ -8,8 +8,8 @@ export class ChatRoom {
   async getNextNick() {
     const online = (await this.state.storage.get("online")) || [];
     let num = 1;
-    while(online.includes(String(num).padStart(3,"0"))) num++;
-    const nick = String(num).padStart(3,"0");
+    while (online.includes(String(num).padStart(3, "0"))) num++;
+    const nick = String(num).padStart(3, "0");
     online.push(nick);
     await this.state.storage.put("online", online);
     return nick;
@@ -18,7 +18,7 @@ export class ChatRoom {
   async removeNick(nick) {
     const online = (await this.state.storage.get("online")) || [];
     const idx = online.indexOf(nick);
-    if(idx>=0) online.splice(idx,1);
+    if (idx >= 0) online.splice(idx, 1);
     await this.state.storage.put("online", online);
   }
 
@@ -34,10 +34,11 @@ export class ChatRoom {
     const nick = await this.getNextNick();
     server.send(JSON.stringify({ type: "nick", nick }));
 
-    const history = await this.state.storage.list({prefix:"msg:"});
-    const sortedHistory = history.sort((a,b)=>a.metadata.time - b.metadata.time);
-    for(const { value } of sortedHistory){
-      server.send(JSON.stringify(value));
+    // 历史消息
+    const history = await this.state.storage.list({ prefix: "msg:" });
+    const sortedHistory = history.sort((a, b) => a.metadata.time - b.metadata.time);
+    for (const { value } of sortedHistory) {
+      server.send(JSON.stringify({ ...value, type: "msg" }));
     }
 
     server.addEventListener("message", async (e) => {
@@ -49,37 +50,42 @@ export class ChatRoom {
             minute: "2-digit",
             second: "2-digit",
             hour12: false,
-            timeZone: "Asia/Shanghai"
+            timeZone: "Asia/Shanghai",
           }).format(new Date());
 
           const payload = {
+            type: "msg",
             nick,
             text: data.text,
             time: shTime,
-            sender: nick
+            sender: nick,
           };
 
           const id = crypto.randomUUID();
-          await this.state.storage.put("msg:"+id, payload, {metadata:{time:Date.now()}});
+          await this.state.storage.put("msg:" + id, payload, { metadata: { time: Date.now() } });
 
           // 保留最新 100 条消息
-          const allMessages = await this.state.storage.list({prefix:"msg:"});
-          if(allMessages.length > 100){
-            const sorted = allMessages.sort((a,b)=>a.metadata.time - b.metadata.time);
+          const allMessages = await this.state.storage.list({ prefix: "msg:" });
+          if (allMessages.length > 100) {
+            const sorted = allMessages.sort((a, b) => a.metadata.time - b.metadata.time);
             const excess = sorted.length - 100;
-            for(let i=0; i<excess; i++){
+            for (let i = 0; i < excess; i++) {
               await this.state.storage.delete(sorted[i].key);
             }
           }
 
           const str = JSON.stringify(payload);
-          this.clients.forEach(c=>{try{c.send(str);}catch{}});
+          this.clients.forEach((c) => {
+            try {
+              c.send(str);
+            } catch {}
+          });
         }
       } catch {}
     });
 
     server.addEventListener("close", async () => {
-      this.clients = this.clients.filter(c => c !== server);
+      this.clients = this.clients.filter((c) => c !== server);
       await this.removeNick(nick);
     });
 
@@ -91,14 +97,14 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if(url.pathname==="/ws"){
+    if (url.pathname === "/ws") {
       const id = env.CHAT_ROOM.idFromName("default");
       const obj = env.CHAT_ROOM.get(id);
       return obj.fetch(request);
     }
 
-    // 后端读取环境变量
-    const PASSWORD = env.CHAT_PASSWORD || "chattest";
+    // 后端读取环境变量密码
+    const PASSWORD = env.CHAT_PASSWORD || "1234";
 
     const html = `
 <!DOCTYPE html>
@@ -163,7 +169,7 @@ function initChat(){
     const d = JSON.parse(e.data);
     if(d.type==="nick"){
       myNick = d.nick;
-    }else{
+    }else if(d.type==="msg"){
       const el = document.createElement("div");
       el.className = "msg "+(d.sender===myNick?"right":"left");
       el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
@@ -178,7 +184,7 @@ function initChat(){
     msgInput.value="";
   };
   sendBtn.onclick = sendMsg;
-  msgInput.addEventListener("keydown",e=>{if(e.key==="Enter") sendMsg();});
+  msgInput.addEventListener("keydown", e => {if(e.key==="Enter") sendMsg();});
 }
 </script>
 </body>
