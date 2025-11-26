@@ -1,4 +1,4 @@
-name = "chat"
+name = "cf-chat"
 main = "worker.js"
 compatibility_date = "2025-11-26"
 
@@ -9,4 +9,4 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
-new_classes = ["ChatRoom"]
+new_sqlite_classes = ["ChatRoom"]
