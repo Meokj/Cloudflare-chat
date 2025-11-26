@@ -2,10 +2,6 @@ name = "chat"
 main = "worker.js"
 compatibility_date = "2025-11-26"
 
-name = "chat"
-main = "worker.js"
-compatibility_date = "2025-11-26"
-
 [durable_objects]
 bindings = [
   { name = "CHAT_ROOM", class_name = "ChatRoom" }
