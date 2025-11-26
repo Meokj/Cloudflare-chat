@@ -34,11 +34,17 @@ export class ChatRoom {
     const nick = await this.getNextNick();
     server.send(JSON.stringify({ type: "nick", nick }));
 
-    // 历史消息
+    // 发送历史消息
     const history = await this.state.storage.list({ prefix: "msg:" });
     const sortedHistory = history.sort((a, b) => a.metadata.time - b.metadata.time);
     for (const { value } of sortedHistory) {
-      server.send(JSON.stringify({ ...value, type: "msg" }));
+      server.send(JSON.stringify({
+        type: "msg",
+        nick: value.nick,
+        sender: value.sender,
+        text: value.text,
+        time: value.time
+      }));
     }
 
     server.addEventListener("message", async (e) => {
@@ -56,9 +62,9 @@ export class ChatRoom {
           const payload = {
             type: "msg",
             nick,
-            text: data.text,
-            time: shTime,
             sender: nick,
+            text: data.text,
+            time: shTime
           };
 
           const id = crypto.randomUUID();
@@ -75,17 +81,13 @@ export class ChatRoom {
           }
 
           const str = JSON.stringify(payload);
-          this.clients.forEach((c) => {
-            try {
-              c.send(str);
-            } catch {}
-          });
+          this.clients.forEach(c => { try { c.send(str); } catch {} });
         }
       } catch {}
     });
 
     server.addEventListener("close", async () => {
-      this.clients = this.clients.filter((c) => c !== server);
+      this.clients = this.clients.filter(c => c !== server);
       await this.removeNick(nick);
     });
 
@@ -103,7 +105,7 @@ export default {
       return obj.fetch(request);
     }
 
-    // 后端读取环境变量密码
+    // 密码通过环境变量
     const PASSWORD = env.CHAT_PASSWORD || "1234";
 
     const html = `
@@ -165,10 +167,11 @@ loginBtn.onclick = () => {
 
 function initChat(){
   const ws = new WebSocket("wss://"+location.host+"/ws");
+
   ws.onmessage = (e)=>{
     const d = JSON.parse(e.data);
     if(d.type==="nick"){
-      myNick = d.nick;
+      myNick = d.nick; // 先获取昵称
     }else if(d.type==="msg"){
       const el = document.createElement("div");
       el.className = "msg "+(d.sender===myNick?"right":"left");
@@ -190,6 +193,6 @@ function initChat(){
 </body>
 </html>
 `;
-    return new Response(html,{headers:{"content-type":"text/html; charset=utf-8"}});
+    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 };
