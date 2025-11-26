@@ -70,7 +70,7 @@ export default {
       }
     }
 
-    // 前端 HTML + JS
+    // 前端 HTML
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -80,7 +80,7 @@ export default {
 <style>
 :root {--bg:#121212; --bubble-left:#1f1f1f; --bubble-right:#4caf50; --text:#eee;}
 body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:column;height:100vh;background:var(--bg);}
-#login, #chat-area {flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;position:relative;}
+#login, #chat-area {flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;}
 #chat {flex:1;overflow-y:auto;padding:15px;width:100%;}
 .msg {margin-bottom:10px;padding:10px 14px;border-radius:15px;max-width:70%;word-wrap:break-word;}
 .msg .meta {font-size:12px;opacity:0.7;margin-bottom:4px;}
@@ -90,8 +90,8 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
 #nick,#msg,#user,#pass {padding:10px;border-radius:8px;border:1px solid #333;background:#222;color:#eee;}
 #user,#pass{margin:5px;}
 #msg{flex:1;margin-right:8px;}
-#send{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
-#logout {position:absolute;top:10px;right:10px;background:none;border:none;color:#fff;font-size:20px;cursor:pointer;}
+#send,#logoutBtn{background:#4caf50;color:white;border:none;padding:0 20px;border-radius:8px;cursor:pointer;}
+#top-bar{width:100%;display:flex;justify-content:flex-end;padding:5px;}
 @media (max-width:600px){#nick{width:70px;padding:8px;}#msg{padding:8px;}#send{padding:0 12px;}}
 </style>
 </head>
@@ -103,8 +103,10 @@ body {margin:0;padding:0;font-family:sans-serif;display:flex;flex-direction:colu
   <div id="loginMsg" style="color:red;margin-top:5px;"></div>
 </div>
 
-<div id="chat-area" style="display:none;height:100%;width:100%;">
-  <button id="logout">&#x274C;</button>
+<div id="chat-area" style="display:none;height:100%;width:100%;flex-direction:column;">
+  <div id="top-bar">
+    <button id="logoutBtn">退出</button>
+  </div>
   <div id="chat"></div>
   <div id="input-area">
     <input id="nick" disabled>
@@ -119,19 +121,29 @@ const chatDiv = document.getElementById("chat-area");
 const userInput = document.getElementById("user");
 const passInput = document.getElementById("pass");
 const loginMsg = document.getElementById("loginMsg");
+
 const chat = document.getElementById("chat");
 const nickInput = document.getElementById("nick");
 const msgInput = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
-const logoutBtn = document.getElementById("logout");
+const logoutBtn = document.getElementById("logoutBtn");
 
 let ws;
 
+// 检查是否已登录
+const savedUser = localStorage.getItem("chatUser");
+if(savedUser){
+  loginDiv.style.display="none";
+  chatDiv.style.display="flex";
+  nickInput.value = savedUser;
+  initWS(savedUser);
+}
+
 // 登录函数
-const login = () => {
+function login() {
   const username = userInput.value.trim();
   const password = passInput.value.trim();
-  if(!username || !password){ loginMsg.textContent="请输入用户名和密码"; return; }
+  if(!username||!password){ loginMsg.textContent="请输入用户名和密码"; return; }
 
   fetch("/", {
     method:"POST",
@@ -139,55 +151,51 @@ const login = () => {
     body: JSON.stringify({username,password})
   }).then(r=>r.json()).then(res=>{
     if(res.ok){
-      localStorage.setItem("chatUser", username);
       loginDiv.style.display="none";
       chatDiv.style.display="flex";
       nickInput.value = username;
-
-      ws = new WebSocket("wss://"+location.host+"/ws");
-      ws.onmessage = (e)=>{
-        const d = JSON.parse(e.data);
-        const el = document.createElement("div");
-        el.className = "msg "+(d.sender===username?"right":"left");
-        el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
-        chat.appendChild(el);
-        chat.scrollTop = chat.scrollHeight;
-      };
+      localStorage.setItem("chatUser", username);
+      initWS(username);
     } else {
       loginMsg.textContent = "用户名或密码错误";
     }
   });
-};
-
-// 页面加载时保持登录
-const savedUser = localStorage.getItem("chatUser");
-if(savedUser){
-  userInput.value = savedUser;
-  login();
 }
 
-// 回车登录
+// 初始化 WebSocket
+function initWS(username){
+  ws = new WebSocket("wss://"+location.host+"/ws");
+  ws.onmessage = (e)=>{
+    const d = JSON.parse(e.data);
+    const el = document.createElement("div");
+    el.className = "msg "+(d.sender===username?"right":"left");
+    el.innerHTML = \`<div class="meta">\${d.nick} · \${d.time}</div><div>\${d.text}</div>\`;
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+  };
+}
+
+// 按回车登录
 userInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 passInput.addEventListener("keydown", e => { if(e.key==="Enter") login(); });
 
 // 发送消息
-const sendMsg = () => {
+function sendMsg() {
   if(!msgInput.value.trim()) return;
   ws.send(JSON.stringify({nick:nickInput.value, text:msgInput.value.trim()}));
   msgInput.value="";
-};
+}
+
 sendBtn.onclick = sendMsg;
 msgInput.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
 
-// 退出
-logoutBtn.onclick = () => {
+// 退出登录
+logoutBtn.onclick = ()=>{
   localStorage.removeItem("chatUser");
-  ws && ws.close();
-  loginDiv.style.display="flex";
   chatDiv.style.display="none";
-  userInput.value = "";
-  passInput.value = "";
-  msgInput.value = "";
+  loginDiv.style.display="flex";
+  if(ws) ws.close();
+  ws=null;
 };
 </script>
 </body>
