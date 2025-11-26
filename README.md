@@ -1,4 +1,4 @@
-# chat
+# Cloudflare-chat
 * `CHAT_USERS`
 ```
 [
