@@ -14,49 +14,30 @@ export class ChatRoom {
     server.accept();
     this.clients.push(server);
 
-    // 发送历史消息
-    const history = await this.state.storage.list({ prefix: "msg:" });
-    const sortedHistory = history.sort((a, b) => a.metadata.time - b.metadata.time);
-    for (const { value } of sortedHistory) {
-      server.send(JSON.stringify(value));
-    }
+    // 先把历史消息发给新加入的客户端
+    const messages = (await this.state.storage.get("messages")) || [];
+    messages.forEach(m => {
+      try { server.send(JSON.stringify(m)); } catch(e) {}
+    });
 
     server.addEventListener("message", async (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (!data.nick || !data.text) return;
-
-        const payload = {
+        const msg = {
           nick: data.nick,
-          sender: data.nick,
           text: data.text,
-          time: new Intl.DateTimeFormat("zh-CN", {
-            hour12: false,
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            timeZone: "Asia/Shanghai",
-          }).format(new Date())
+          time: new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" }),
+          sender: data.nick
         };
 
-        // 持久化消息
-        const id = crypto.randomUUID();
-        await this.state.storage.put("msg:" + id, payload, { metadata: { time: Date.now() } });
+        // 保存到 Durable Object Storage
+        let all = (await this.state.storage.get("messages")) || [];
+        all.push(msg);
+        if (all.length > 100) all = all.slice(all.length - 100); // 保留最新100条
+        await this.state.storage.put("messages", all);
 
-        // 保留最新100条
-        const allMessages = await this.state.storage.list({ prefix: "msg:" });
-        if (allMessages.length > 100) {
-          const sorted = allMessages.sort((a, b) => a.metadata.time - b.metadata.time);
-          const excess = sorted.length - 100;
-          for (let i = 0; i < excess; i++) {
-            await this.state.storage.delete(sorted[i].key);
-          }
-        }
-
-        // 广播给所有客户端
-        const str = JSON.stringify(payload);
-        this.clients.forEach(c => { try { c.send(str); } catch {} });
-
+        // 广播给在线客户端
+        this.clients.forEach(c => { try { c.send(JSON.stringify(msg)); } catch(e){} });
       } catch {}
     });
 
@@ -78,6 +59,7 @@ export default {
       return obj.fetch(request);
     }
 
+    // 前端 HTML
     const html = `
 <!DOCTYPE html>
 <html lang="zh">
@@ -114,6 +96,7 @@ const msg=document.getElementById("msg");
 const send=document.getElementById("send");
 const ws=new WebSocket("wss://"+location.host+"/ws");
 
+// 消息到达时显示
 ws.onmessage=(e)=>{
   const d=JSON.parse(e.data);
   const el=document.createElement("div");
@@ -123,6 +106,7 @@ ws.onmessage=(e)=>{
   chat.scrollTop=chat.scrollHeight;
 };
 
+// 发送消息
 const sendMsg=()=>{
   if(!nick.value.trim()||!msg.value.trim()) return;
   ws.send(JSON.stringify({nick:nick.value.trim(),text:msg.value.trim()}));
@@ -130,11 +114,12 @@ const sendMsg=()=>{
 };
 
 send.onclick=sendMsg;
-msg.addEventListener("keydown",e=>{if(e.key==="Enter")sendMsg();});
+msg.addEventListener("keydown", e=>{if(e.key==="Enter") sendMsg();});
 </script>
 </body>
 </html>
 `;
+
     return new Response(html, { headers: { "content-type":"text/html; charset=utf-8" } });
   }
 };
